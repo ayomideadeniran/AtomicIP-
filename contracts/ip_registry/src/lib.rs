@@ -1,5 +1,8 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec, Error};
+
+#[cfg(test)]
+mod test;
 
 // ── Storage Keys ────────────────────────────────────────────────────────────
 
@@ -59,7 +62,9 @@ impl IpRegistry {
         env.storage()
             .persistent()
             .get(&DataKey::IpRecord(ip_id))
-            .expect("IP not found")
+            .unwrap_or_else(|| {
+                env.panic_with_error(Error::from_contract_error(1))
+            })
     }
 
     /// Verify a commitment: hash the secret and compare to stored commitment.
@@ -68,7 +73,9 @@ impl IpRegistry {
             .storage()
             .persistent()
             .get(&DataKey::IpRecord(ip_id))
-            .expect("IP not found");
+            .unwrap_or_else(|| {
+                env.panic_with_error(Error::from_contract_error(1))
+            });
         record.commitment_hash == secret
     }
 

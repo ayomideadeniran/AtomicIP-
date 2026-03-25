@@ -77,6 +77,7 @@ impl AtomicSwap {
             .get(&DataKey::Swap(swap_id))
             .expect("swap not found");
 
+        swap.seller.require_auth();
         assert!(swap.status == SwapStatus::Accepted, "swap not accepted");
         // Full impl: verify key against IP commitment, then transfer escrowed payment
         swap.status = SwapStatus::Completed;
@@ -152,5 +153,40 @@ mod tests {
         client.accept_swap(&swap_id);
         let swap = client.get_swap(&swap_id);
         assert_eq!(swap.status, SwapStatus::Accepted);
+    }
+
+    #[test]
+    fn test_reveal_key_unauthorized_rejected() {
+        let (env, client) = setup();
+
+        let seller = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        let key = BytesN::from_array(&env, &[1u8; 32]);
+
+        // seed an Accepted swap directly
+        let swap_id = env.as_contract(&client.address, || {
+            let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
+            let swap = SwapRecord {
+                ip_id: 1,
+                seller: seller.clone(),
+                buyer: buyer.clone(),
+                price: 100,
+                status: SwapStatus::Accepted,
+            };
+            env.storage().persistent().set(&DataKey::Swap(id), &swap);
+            env.storage().instance().set(&DataKey::NextId, &(id + 1));
+            id
+        });
+
+        // no auth — must fail
+        env.mock_auths(&[]);
+        let result = client.try_reveal_key(&swap_id, &key);
+        assert!(result.is_err(), "expected auth failure for unauthorized caller");
+
+        // legitimate seller can reveal
+        env.mock_all_auths();
+        client.reveal_key(&swap_id, &key);
+        let swap = client.get_swap(&swap_id);
+        assert_eq!(swap.status, SwapStatus::Completed);
     }
 }

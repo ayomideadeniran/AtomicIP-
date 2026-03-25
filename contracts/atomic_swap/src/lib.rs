@@ -12,7 +12,7 @@ pub enum DataKey {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 #[contracttype]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum SwapStatus {
     Pending,
     Accepted,
@@ -63,6 +63,7 @@ impl AtomicSwap {
             .get(&DataKey::Swap(swap_id))
             .expect("swap not found");
 
+        swap.buyer.require_auth();
         assert!(swap.status == SwapStatus::Pending, "swap not pending");
         swap.status = SwapStatus::Accepted;
         env.storage().persistent().set(&DataKey::Swap(swap_id), &swap);
@@ -104,5 +105,52 @@ impl AtomicSwap {
             .persistent()
             .get(&DataKey::Swap(swap_id))
             .expect("swap not found")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    fn setup() -> (Env, AtomicSwapClient<'static>) {
+        let env = Env::default();
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        (env, client)
+    }
+
+    #[test]
+    fn test_accept_swap_unauthorized_rejected() {
+        let (env, client) = setup();
+
+        let seller = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        // initiate a swap
+        let swap_id = env.as_contract(&client.address, || {
+            let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
+            let swap = SwapRecord {
+                ip_id: 1,
+                seller: seller.clone(),
+                buyer: buyer.clone(),
+                price: 100,
+                status: SwapStatus::Pending,
+            };
+            env.storage().persistent().set(&DataKey::Swap(id), &swap);
+            env.storage().instance().set(&DataKey::NextId, &(id + 1));
+            id
+        });
+
+        // stranger tries to accept — must panic with auth error
+        env.mock_auths(&[]);
+        let result = client.try_accept_swap(&swap_id);
+        assert!(result.is_err(), "expected auth failure for unauthorized caller");
+
+        // legitimate buyer can accept
+        env.mock_all_auths();
+        client.accept_swap(&swap_id);
+        let swap = client.get_swap(&swap_id);
+        assert_eq!(swap.status, SwapStatus::Accepted);
     }
 }

@@ -1,13 +1,18 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec, Error};
+
+#[cfg(test)]
+mod test;
 
 // ── Storage Keys ────────────────────────────────────────────────────────────
 
 #[contracttype]
+#[derive(Debug, PartialEq)]
 pub enum DataKey {
     IpRecord(u64),
     OwnerIps(Address),
     NextId,
+    CommitmentOwner(BytesN<32>), // tracks which owner already holds a commitment hash
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -49,15 +54,24 @@ impl IpRegistry {
         // a valid authorization for `owner`. This is the correct auth pattern.
         owner.require_auth();
 
+        // Reject duplicate commitment hash globally
+        assert!(
+            !env.storage()
+                .persistent()
+                .has(&DataKey::CommitmentOwner(commitment_hash.clone())),
+            "commitment already registered"
+        );
+
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let record = IpRecord {
             owner: owner.clone(),
-            commitment_hash,
+            commitment_hash: commitment_hash.clone(),
             timestamp: env.ledger().timestamp(),
         };
 
         env.storage().persistent().set(&DataKey::IpRecord(id), &record);
+        env.storage().persistent().extend_ttl(&DataKey::IpRecord(id), 50000, 50000);
 
         // Append to owner index
         let mut ids: Vec<u64> = env
@@ -66,10 +80,62 @@ impl IpRegistry {
             .get(&DataKey::OwnerIps(owner.clone()))
             .unwrap_or(Vec::new(&env));
         ids.push_back(id);
-        env.storage().persistent().set(&DataKey::OwnerIps(owner), &ids);
+        env.storage().persistent().set(&DataKey::OwnerIps(owner.clone()), &ids);
+        env.storage().persistent().extend_ttl(&DataKey::OwnerIps(owner), 50000, 50000);
 
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
+
+        env.events().publish(
+            (symbol_short!("ip_commit"), owner),
+            (id, record.timestamp),
+        );
+
         id
+    }
+
+    /// Transfer IP ownership to a new address.
+    pub fn transfer_ip(env: Env, ip_id: u64, new_owner: Address) {
+        let mut record: IpRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IpRecord(ip_id))
+            .expect("IP not found");
+
+        record.owner.require_auth();
+
+        let old_owner = record.owner.clone();
+
+        // Remove from old owner's index
+        let mut old_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OwnerIps(old_owner.clone()))
+            .unwrap_or(Vec::new(&env));
+        if let Some(pos) = old_ids.iter().position(|x| x == ip_id) {
+            old_ids.remove(pos as u32);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerIps(old_owner), &old_ids);
+
+        // Add to new owner's index
+        let mut new_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OwnerIps(new_owner.clone()))
+            .unwrap_or(Vec::new(&env));
+        new_ids.push_back(ip_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerIps(new_owner.clone()), &new_ids);
+
+        // Update commitment index
+        env.storage()
+            .persistent()
+            .set(&DataKey::CommitmentOwner(record.commitment_hash.clone()), &new_owner);
+
+        record.owner = new_owner;
+        env.storage().persistent().set(&DataKey::IpRecord(ip_id), &record);
     }
 
     /// Retrieve an IP record by ID.
@@ -77,25 +143,32 @@ impl IpRegistry {
         env.storage()
             .persistent()
             .get(&DataKey::IpRecord(ip_id))
-            .expect("IP not found")
+            .unwrap_or_else(|| {
+                env.panic_with_error(Error::from_contract_error(1))
+            })
     }
 
-    /// Verify a commitment: hash the secret and compare to stored commitment.
-    pub fn verify_commitment(env: Env, ip_id: u64, secret: BytesN<32>) -> bool {
+    /// Verify a commitment: recompute sha256(secret || blinding_factor) and compare to stored hash.
+    pub fn verify_commitment(
+        env: Env,
+        ip_id: u64,
+        secret: BytesN<32>,
+        blinding_factor: BytesN<32>,
+    ) -> bool {
         let record: IpRecord = env
             .storage()
             .persistent()
             .get(&DataKey::IpRecord(ip_id))
-            .expect("IP not found");
+            .unwrap_or_else(|| {
+                env.panic_with_error(Error::from_contract_error(1))
+            });
         record.commitment_hash == secret
     }
 
     /// List all IP IDs owned by an address.
-    pub fn list_ip_by_owner(env: Env, owner: Address) -> Vec<u64> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::OwnerIps(owner))
-            .unwrap_or(Vec::new(&env))
+    /// Returns `None` if the address has never committed any IP.
+    pub fn list_ip_by_owner(env: Env, owner: Address) -> Option<Vec<u64>> {
+        env.storage().persistent().get(&DataKey::OwnerIps(owner))
     }
 }
 

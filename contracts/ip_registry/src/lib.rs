@@ -8,6 +8,7 @@ pub enum DataKey {
     IpRecord(u64),
     OwnerIps(Address),
     NextId,
+    CommitmentOwner(BytesN<32>), // tracks which owner already holds a commitment hash
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -31,15 +32,26 @@ impl IpRegistry {
     pub fn commit_ip(env: Env, owner: Address, commitment_hash: BytesN<32>) -> u64 {
         owner.require_auth();
 
+        // Reject duplicate commitment hash globally
+        assert!(
+            !env.storage()
+                .persistent()
+                .has(&DataKey::CommitmentOwner(commitment_hash.clone())),
+            "commitment already registered"
+        );
+
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let record = IpRecord {
             owner: owner.clone(),
-            commitment_hash,
+            commitment_hash: commitment_hash.clone(),
             timestamp: env.ledger().timestamp(),
         };
 
         env.storage().persistent().set(&DataKey::IpRecord(id), &record);
+        env.storage()
+            .persistent()
+            .set(&DataKey::CommitmentOwner(commitment_hash), &owner);
 
         // Append to owner index
         let mut ids: Vec<u64> = env
@@ -58,6 +70,51 @@ impl IpRegistry {
         );
 
         id
+    }
+
+    /// Transfer IP ownership to a new address.
+    pub fn transfer_ip(env: Env, ip_id: u64, new_owner: Address) {
+        let mut record: IpRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IpRecord(ip_id))
+            .expect("IP not found");
+
+        record.owner.require_auth();
+
+        let old_owner = record.owner.clone();
+
+        // Remove from old owner's index
+        let mut old_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OwnerIps(old_owner.clone()))
+            .unwrap_or(Vec::new(&env));
+        if let Some(pos) = old_ids.iter().position(|x| x == ip_id) {
+            old_ids.remove(pos as u32);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerIps(old_owner), &old_ids);
+
+        // Add to new owner's index
+        let mut new_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OwnerIps(new_owner.clone()))
+            .unwrap_or(Vec::new(&env));
+        new_ids.push_back(ip_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerIps(new_owner.clone()), &new_ids);
+
+        // Update commitment index
+        env.storage()
+            .persistent()
+            .set(&DataKey::CommitmentOwner(record.commitment_hash.clone()), &new_owner);
+
+        record.owner = new_owner;
+        env.storage().persistent().set(&DataKey::IpRecord(ip_id), &record);
     }
 
     /// Retrieve an IP record by ID.

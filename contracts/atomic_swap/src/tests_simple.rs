@@ -42,7 +42,7 @@ mod tests {
         assert_eq!(swap.status, crate::SwapStatus::Accepted);
         
         // Complete swap — caller must be the seller
-        super::AtomicSwap::reveal_key(env.clone(), swap_id, seller.clone(), decryption_key);
+        super::AtomicSwap::reveal_key(env.clone(), swap_id, seller.clone(), decryption_key.clone(), decryption_key);
         let swap = AtomicSwap::get_swap(env.clone(), swap_id);
         assert_eq!(swap.status, crate::SwapStatus::Completed);
     }

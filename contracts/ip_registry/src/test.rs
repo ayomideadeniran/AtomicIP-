@@ -100,6 +100,32 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "ContractError(2)")]
+    fn test_commit_ip_zero_hash_rejected() {
+        let env = Env::default();
+        let contract_id = env.register(crate::IpRegistry, ());
+        let client = IpRegistryClient::new(&env, &contract_id);
+
+        let owner = <Address as TestAddress>::generate(&env);
+        env.mock_all_auths();
+
+        // All-zero hash has no cryptographic value — must panic with ContractError::ZeroCommitmentHash (code 2)
+        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+        client.commit_ip(&owner, &zero_hash);
+    }
+
+    #[test]
+    #[should_panic(expected = "ContractError(1)")]
+    fn test_get_ip_nonexistent_returns_structured_error() {
+        let env = Env::default();
+        let contract_id = env.register(crate::IpRegistry, ());
+        let client = IpRegistryClient::new(&env, &contract_id);
+
+        // ID 999 was never committed — must panic with ContractError::IpNotFound (code 1)
+        client.get_ip(&999u64);
+    }
+
+    #[test]
     fn test_list_ip_by_owner_unknown_returns_none() {
         let env = Env::default();
         let contract_id = env.register(crate::IpRegistry, ());

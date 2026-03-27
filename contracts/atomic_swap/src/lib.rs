@@ -357,6 +357,29 @@ mod tests {
         );
     }
 
+    /// SECURITY: initiating a swap for a non-existent ip_id must be rejected.
+    /// The cross-call to ip_registry.get_ip panics when the IP does not exist.
+    #[test]
+    fn invalid_ip_id_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let seller = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        // Register a registry but do NOT commit any IP — ip_id 9999 does not exist.
+        let registry_id = env.register(IpRegistry, ());
+
+        let client = AtomicSwapClient::new(&env, &setup_swap(&env));
+
+        assert!(
+            client
+                .try_initiate_swap(&registry_id, &9999_u64, &seller, &100_i128, &buyer)
+                .is_err(),
+            "expected initiate_swap to fail for non-existent ip_id"
+        );
+    }
+
     /// SECURITY: a zero price must be rejected to prevent free IP giveaways.
     #[test]
     fn zero_price_rejected() {

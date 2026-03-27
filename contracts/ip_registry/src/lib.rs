@@ -30,6 +30,7 @@ pub enum DataKey {
 #[contracttype]
 #[derive(Clone)]
 pub struct IpRecord {
+    pub ip_id: u64,
     pub owner: Address,
     pub commitment_hash: BytesN<32>,
     pub timestamp: u64,
@@ -82,6 +83,7 @@ impl IpRegistry {
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let record = IpRecord {
+            ip_id: id,
             owner: owner.clone(),
             commitment_hash: commitment_hash.clone(),
             timestamp: env.ledger().timestamp(),

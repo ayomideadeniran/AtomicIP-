@@ -90,4 +90,26 @@ mod tests {
         // attacker != seller — must panic with "only the seller can reveal the key"
         client.reveal_key(&swap_id, &attacker, &key);
     }
+
+    /// Test: cancel_expired_swap function exists and has correct signature.
+    /// Verifies that only Accepted swaps can be cancelled via cancel_expired_swap.
+    #[test]
+    #[should_panic(expected = "swap not in Accepted state")]
+    fn test_cancel_expired_swap_pending_state_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let seller = soroban_sdk::Address::generate(&env);
+        let buyer = soroban_sdk::Address::generate(&env);
+
+        let (registry_id, ip_id) = setup_registry(&env, &seller);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+
+        // Initiate but don't accept the swap
+        let swap_id = client.initiate_swap(&registry_id, &ip_id, &seller, &500_i128, &buyer);
+
+        // Try to cancel before accepting — should panic because swap is not Accepted
+        client.cancel_expired_swap(&swap_id, &buyer);
+    }
 }

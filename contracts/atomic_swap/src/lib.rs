@@ -96,12 +96,15 @@ impl AtomicSwap {
         // 2. Guard: price must be positive.
         assert!(price > 0, "price must be greater than zero");
 
-        // 3. Cross-contract ownership check.
+        // 3. Cross-contract ownership check — SECURITY FIX.
+        //    Fetches the IP record from the registry and asserts the caller is
+        //    the registered owner. Without this check anyone could initiate a
+        //    swap for an IP they do not own.
         let registry = IpRegistryClient::new(&env, &ip_registry_id);
         let record = registry.get_ip(&ip_id);
         assert!(record.owner == seller, "seller is not the IP owner");
 
-        // 3. Guard: reject if an active swap already exists for this IP.
+        // 4. Guard: reject if an active swap already exists for this IP.
         assert!(
             !env.storage().persistent().has(&DataKey::ActiveSwap(ip_id)),
             "active swap already exists for this ip_id"

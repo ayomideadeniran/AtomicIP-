@@ -361,6 +361,57 @@ mod tests {
             "expected initiate_swap to fail for zero price"
         );
     }
+
+    /// SECURITY: only the designated buyer may accept a swap.
+    /// Any other address calling accept_swap must be rejected.
+    #[test]
+    fn non_buyer_cannot_accept_swap() {
+        let env = Env::default();
+        // No mock_all_auths — auth checks are fully enforced.
+
+        let seller = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        // Set up registry and IP with seller auth mocked for setup calls.
+        let registry_id = env.register(IpRegistry, ());
+        let registry = IpRegistryClient::new(&env, &registry_id);
+        let commitment = BytesN::from_array(&env, &[0u8; 32]);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &seller,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &registry_id,
+                fn_name: "commit_ip",
+                args: soroban_sdk::IntoVal::into_val(&(&seller, &commitment), &env),
+                sub_invokes: &[],
+            },
+        }]);
+        let ip_id = registry.commit_ip(&seller, &commitment);
+
+        let swap_contract = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &swap_contract);
+
+        // Initiate swap with seller auth.
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &seller,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &swap_contract,
+                fn_name: "initiate_swap",
+                args: soroban_sdk::IntoVal::into_val(
+                    &(&registry_id, &ip_id, &seller, &100_i128, &buyer),
+                    &env,
+                ),
+                sub_invokes: &[],
+            },
+        }]);
+        let swap_id = client.initiate_swap(&registry_id, &ip_id, &seller, &100_i128, &buyer);
+
+        // Attempt accept_swap with NO auth mocked at all.
+        // buyer.require_auth() inside accept_swap must reject this call.
+        assert!(
+            client.try_accept_swap(&swap_id).is_err(),
+            "expected accept_swap to fail when buyer auth is not provided"
+        );
+    }
 }
 
 #[cfg(test)]

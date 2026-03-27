@@ -9,7 +9,7 @@ mod tests {
     fn setup_registry(env: &Env, owner: &soroban_sdk::Address) -> (soroban_sdk::Address, u64) {
         let registry_id = env.register(IpRegistry, ());
         let registry = IpRegistryClient::new(env, &registry_id);
-        let commitment = BytesN::from_array(env, &[0u8; 32]);
+        let commitment = BytesN::from_array(env, &[1u8; 32]);
         let ip_id = registry.commit_ip(owner, &commitment);
         (registry_id, ip_id)
     }

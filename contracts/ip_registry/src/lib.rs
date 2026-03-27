@@ -6,8 +6,6 @@ use soroban_sdk::{
 #[cfg(test)]
 mod test;
 
-mod test;
-
 // ── Error Codes ────────────────────────────────────────────────────────────
 
 #[repr(u32)]
@@ -68,7 +66,9 @@ impl IpRegistry {
 
         // Reject zero-byte commitment hash (Issue #40)
         if commitment_hash == BytesN::from_array(&env, &[0u8; 32]) {
-            env.panic_with_error(Error::from_contract_error(ContractError::ZeroCommitmentHash as u32));
+            env.panic_with_error(Error::from_contract_error(
+                ContractError::ZeroCommitmentHash as u32,
+            ));
         }
 
         // Reject duplicate commitment hash globally
@@ -184,7 +184,7 @@ impl IpRegistry {
         env: Env,
         ip_id: u64,
         secret: BytesN<32>,
-        _blinding_factor: BytesN<32>,
+        blinding_factor: BytesN<32>,
     ) -> bool {
         let record: IpRecord = env
             .storage()
@@ -193,14 +193,12 @@ impl IpRegistry {
             .unwrap_or_else(|| {
                 env.panic_with_error(Error::from_contract_error(ContractError::IpNotFound as u32))
             });
-        
-        // Hash the secret and blinding factor using SHA256 (Issue #43: Critical fix)
-        // Proper commitment verification: hash first, then compare
-        let mut preimage = soroban_sdk::Vec::new(&env);
-        preimage.append(secret);
-        preimage.append(blinding_factor);
-        let computed_hash = env.crypto().sha256(&preimage);
-        
+
+        let mut preimage = soroban_sdk::Bytes::new(&env);
+        preimage.append(&secret.into());
+        preimage.append(&blinding_factor.into());
+        let computed_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
+
         record.commitment_hash == computed_hash
     }
 
